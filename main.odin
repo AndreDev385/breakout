@@ -17,10 +17,34 @@ Brick :: struct {
 }
 
 GameState :: enum {
-	Ready,
+	StartScreen,
 	Playing,
+	Paused,
 	GameOver,
 	GameWon,
+}
+
+Paddle :: struct {
+	using rec:   rl.Rectangle,
+	speed:       f32,
+}
+
+Ball :: struct {
+	radius:      f32,
+	speed:       f32,
+	vel:         rl.Vector2,
+	pos:         rl.Vector2,
+	initial_vel: rl.Vector2,
+	initial_pos: rl.Vector2,
+}
+
+GameData :: struct {
+	score:        int,
+	lives:        int,
+	ball:         Ball,
+	paddle:       Paddle,
+	bricks:       [MAX_BRICKS]Brick,
+	bricks_count: int,
 }
 
 init_bricks :: proc(
@@ -63,137 +87,137 @@ main :: proc() {
 		height = scene_height,
 	}
 
-	game_state := GameState.Ready
-
-	paddle_y: f32 = scene_height - 40
-	paddle_width: f32 = 100
-	paddle_height: f32 = 20
-	paddle_speed: f32 = 450
-	paddle := rl.Rectangle {
-		x      = (scene.x + (scene_width / 2)) - (paddle_width / 2),
-		y      = paddle_y,
-		width  = paddle_width,
-		height = paddle_height,
+	game_state := GameState.StartScreen
+	game_data := GameData {
+		paddle = {
+			rec = {
+				x = (scene.x + (scene_width / 2)) - (100 / 2),
+				y = scene_height - 40,
+				width = 100,
+				height = 20,
+			},
+			speed = 450,
+		},
+		ball = {
+			speed = 400,
+			radius = 10.0,
+			vel = {400, -400},
+			pos = {f32(scene.x + (scene.width / 2)), f32(scene_height - 41 - 10)},
+			initial_vel = {400, -400},
+			initial_pos = {f32(scene.x + (scene.width / 2)), f32(scene_height - 41 - 10)},
+		},
+		lives = 3,
+		score = 0,
 	}
 
-	ball_radius: f32 = 10.0
-	ball_speed: f32 = 400
-
-	ball_initial_pos := rl.Vector2 {
-		f32(scene.x + (scene.width / 2)),
-		f32(paddle_y - ball_radius) - 1,
-	}
-	ball_initial_vel := rl.Vector2{ball_speed, -ball_speed}
-
-	ball_pos := ball_initial_pos
-	ball_velocity := ball_initial_vel
-
-	bricks: [MAX_BRICKS]Brick
-	bricks_count := 0
-	bricks_width: f32 = 40
-	bricks_height: f32 = 20
 	init_bricks(
-		&bricks,
-		&bricks_count,
+		&game_data.bricks,
+		&game_data.bricks_count,
 		scene.x + 90,
 		scene.y + 100,
-		bricks_width,
-		bricks_height,
+		40,
+		20,
 		4,
 		10,
 		2,
 	)
 
-	lives := 3
-
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
+		ball_fell := game_data.ball.pos.y >= scene.y + scene.height
 
-		// INPUT ===================
-		if rl.IsKeyPressed(.SPACE) && game_state == .Ready {
-			ball_pos = ball_initial_pos
-			ball_velocity = ball_initial_vel
-			game_state = .Playing
+		// UPDATE ==================
+		if rl.IsKeyPressed(.SPACE) && game_state == .StartScreen {
+			game_data.ball.pos = game_data.ball.initial_pos
+			game_data.ball.vel = game_data.ball.initial_vel
 		}
 
 		if game_state == .Playing {
 			if rl.IsKeyDown(.D) {
-				paddle.x += (paddle_speed * dt)
-				if paddle.x + paddle.width > scene.x + scene.width {
-					paddle.x = (scene.x + scene.width) - paddle.width
+				game_data.paddle.x += (game_data.paddle.speed * dt)
+				if game_data.paddle.x + game_data.paddle.width > scene.x + scene.width {
+					game_data.paddle.x = (scene.x + scene.width) - game_data.paddle.width
 				}
 			}
 
 			if rl.IsKeyDown(.A) {
-				paddle.x -= (paddle_speed * dt)
-				if paddle.x < scene.x {
-					paddle.x = scene.x
+				game_data.paddle.x -= (game_data.paddle.speed * dt)
+				if game_data.paddle.x < scene.x {
+					game_data.paddle.x = scene.x
 				}
 			}
 		}
 
-		// UPDATE ==================
 		if game_state == .Playing {
-			ball_pos += ball_velocity * dt
+			game_data.ball.pos += game_data.ball.vel * dt
 		}
 
 		// ball collisions
-		if ball_pos.x - ball_radius <= scene.x {
-			ball_velocity.x = -ball_velocity.x
+		if game_data.ball.pos.x - game_data.ball.radius <= scene.x {
+			game_data.ball.vel.x = -game_data.ball.vel.x
 		}
 
-		if ball_pos.y - ball_radius <= scene.y {
-			ball_velocity.y = -ball_velocity.y
+		if game_data.ball.pos.y - game_data.ball.radius <= scene.y {
+			game_data.ball.vel.y = -game_data.ball.vel.y
 		}
 
-		if ball_pos.x + ball_radius >= scene.x + scene_width {
-			ball_velocity.x = -ball_velocity.x
+		if game_data.ball.pos.x + game_data.ball.radius >= scene.x + scene_width {
+			game_data.ball.vel.x = -game_data.ball.vel.x
 		}
 
-		if game_state == .Playing && ball_pos.y >= scene.y + scene.height {
-			lives -= 1
-			game_state = .Ready
+		if game_state == .Playing && ball_fell {
+			game_data.lives -= 1
 		}
 
 		// ball + paddle collision
-		nearest_x := math.clamp(ball_pos.x, paddle.x, paddle.x + paddle_width)
-		nearest_y := math.clamp(ball_pos.y, paddle.y, paddle.y + paddle_height)
+		nearest_x := math.clamp(
+			game_data.ball.pos.x,
+			game_data.paddle.x,
+			game_data.paddle.x + game_data.paddle.width,
+		)
+		nearest_y := math.clamp(
+			game_data.ball.pos.y,
+			game_data.paddle.y,
+			game_data.paddle.y + game_data.paddle.height,
+		)
 
-		dx := ball_pos.x - nearest_x
-		dy := ball_pos.y - nearest_y
+		dx := game_data.ball.pos.x - nearest_x
+		dy := game_data.ball.pos.y - nearest_y
 
 		distance := math.sqrt_f32(dx * dx + dy * dy)
 
-		if distance <= ball_radius {
-			ball_pos.y = nearest_y - ball_radius
-			hit_factor := (ball_pos.x - (paddle.x + paddle_width / 2)) / (paddle_width / 2)
+		if distance <= game_data.ball.radius {
+			game_data.ball.pos.y = nearest_y - game_data.ball.radius
+			hit_factor :=
+				(game_data.ball.pos.x - (game_data.paddle.x + game_data.paddle.width / 2)) /
+				(game_data.paddle.width / 2)
 			angle := hit_factor * MAX_ANGLE
-			ball_velocity.x = ball_speed * math.sin_f32(angle)
-			ball_velocity.y = -ball_speed * math.cos_f32(angle)
+			game_data.ball.vel.x = game_data.ball.speed * math.sin_f32(angle)
+			game_data.ball.vel.y = -game_data.ball.speed * math.cos_f32(angle)
 		}
 
-		for &brick in bricks[:bricks_count] {
-			nearest_x := math.clamp(ball_pos.x, brick.x, brick.x + bricks_width)
-			nearest_y := math.clamp(ball_pos.y, brick.y, brick.y + bricks_height)
+		for &brick in game_data.bricks[:game_data.bricks_count] {
+			nearest_x := math.clamp(game_data.ball.pos.x, brick.x, brick.x + brick.width)
+			nearest_y := math.clamp(game_data.ball.pos.y, brick.y, brick.y + brick.height)
 
-			dx := ball_pos.x - nearest_x
-			dy := ball_pos.y - nearest_y
+			dx := game_data.ball.pos.x - nearest_x
+			dy := game_data.ball.pos.y - nearest_y
 
 			distance := math.sqrt_f32(dx * dx + dy * dy)
 
-			if distance <= ball_radius {
-				left := ball_pos.x + ball_radius - brick.x
-				right := brick.x + bricks_width - ball_pos.x - ball_radius
-				up := ball_pos.y + ball_radius - brick.y
-				bottom := brick.y + bricks_height - ball_pos.y - ball_radius
+			if distance <= game_data.ball.radius {
+				left := game_data.ball.pos.x + game_data.ball.radius - brick.x
+				right := brick.x + brick.width - game_data.ball.pos.x - game_data.ball.radius
+				up := game_data.ball.pos.y + game_data.ball.radius - brick.y
+				bottom := brick.y + brick.height - game_data.ball.pos.y - game_data.ball.radius
 
 				min_overlap_x := min(left, right)
 				min_overlap_y := min(up, bottom)
 
 				if min_overlap_x < min_overlap_y {
-					ball_velocity.x = -ball_velocity.x
+					game_data.ball.vel.x = -game_data.ball.vel.x
 				} else {
-					ball_velocity.y = -ball_velocity.y
+					game_data.ball.vel.y = -game_data.ball.vel.y
 				}
 
 				brick.lives -= 1
@@ -202,15 +226,24 @@ main :: proc() {
 
 		// Move dead breaks to the end
 		j := 0
-		for i in 0 ..< bricks_count {
-			if bricks[i].lives > 0 {
-				bricks[j] = bricks[i]
+		for i in 0 ..< game_data.bricks_count {
+			if game_data.bricks[i].lives > 0 {
+				game_data.bricks[j] = game_data.bricks[i]
 				j += 1
 			}
 		}
-		bricks_count = j
+		game_data.bricks_count = j
 
-		if bricks_count == 0 {
+		// CHANGE GAME STATE =======
+		if game_state == .StartScreen && rl.IsKeyPressed(.SPACE) {
+			game_state = .Playing
+		} else if game_state == .Playing && ball_fell {
+			game_state = .GameOver if game_data.lives == 0 else .StartScreen
+		} else if game_state == .Playing && rl.IsKeyPressed(.P) {
+			game_state = .Paused
+		} else if game_state == .Paused && rl.IsKeyPressed(.P) {
+			game_state = .Playing
+		} else if game_state == .Playing && game_data.bricks_count == 0 {
 			game_state = .GameWon
 		}
 
@@ -219,22 +252,32 @@ main :: proc() {
 		rl.ClearBackground({30, 30, 30, 255})
 		defer rl.EndDrawing()
 
-		lives_text := fmt.ctprintf("Lives %d", lives)
+		lives_text := fmt.ctprintf("Lives %d", game_data.lives)
 		rl.DrawText(lives_text, i32(scene.x), 50, 20, rl.WHITE)
 
-		bricks_text := fmt.ctprintf("Bricks left %d", bricks_count)
+		bricks_text := fmt.ctprintf("Bricks left %d", game_data.bricks_count)
 		text_width := rl.MeasureText(bricks_text, 20)
 		rl.DrawText(bricks_text, i32(scene.x + scene.width) - text_width, 50, 20, rl.WHITE)
 
 		// Draw playable scene
 		rl.DrawRectangleRec(scene, rl.BLACK)
 
-		rl.DrawRectangleRec(paddle, rl.WHITE)
-		rl.DrawCircleV(ball_pos, ball_radius, rl.WHITE)
+		rl.DrawRectangleRec(game_data.paddle, rl.WHITE)
+		rl.DrawCircleV(game_data.ball.pos, game_data.ball.radius, rl.WHITE)
 
 		switch game_state {
-		case .Ready:
+		case .StartScreen:
 			text: cstring = "Press SPACE to start"
+			text_width := rl.MeasureText(text, 32)
+			rl.DrawText(
+				text,
+				i32(scene.x) + i32(scene.width / 2) - (text_width / 2),
+				i32(scene.height / 2),
+				32,
+				rl.WHITE,
+			)
+		case .Paused:
+			text: cstring = "Press SPACE to resume"
 			text_width := rl.MeasureText(text, 32)
 			rl.DrawText(
 				text,
@@ -266,8 +309,8 @@ main :: proc() {
 		case .Playing:
 		}
 
-		for i in 0 ..< bricks_count {
-			rl.DrawRectangleRec(bricks[i], rl.WHITE)
+		for i in 0 ..< game_data.bricks_count {
+			rl.DrawRectangleRec(game_data.bricks[i], rl.WHITE)
 		}
 	}
 }
