@@ -2,10 +2,11 @@ package main
 
 import "core:fmt"
 import "core:math"
+import "core:math/rand"
 import rl "vendor:raylib"
 
-SCREEN_WIDTH :: 1280
-SCREEN_HEIGHT :: 800
+SCREEN_WIDTH :: 640 * 2
+SCREEN_HEIGHT :: 480 * 2
 
 MAX_ANGLE :: math.PI / 3
 
@@ -16,7 +17,7 @@ PADDLE_HEIGHT :: 20
 PADDLE_SPEED :: 450
 
 BALL_SPEED :: 400
-BALL_RADIUS :: 10.0
+BALL_RADIUS :: 12.0
 
 Brick :: struct {
 	using rec: rl.Rectangle,
@@ -35,26 +36,32 @@ GameState :: enum {
 Paddle :: struct {
 	using rec: rl.Rectangle,
 	speed:     f32,
+	texture:   ^rl.Texture2D,
 }
 
 Ball :: struct {
-	radius:      f32,
-	speed:       f32,
-	vel:         rl.Vector2,
-	pos:         rl.Vector2,
-	initial_vel: rl.Vector2,
-	initial_pos: rl.Vector2,
+	radius:  f32,
+	speed:   f32,
+	vel:     rl.Vector2,
+	pos:     rl.Vector2,
+	texture: ^rl.Texture2D,
 }
 
 GameData :: struct {
-	score:        int,
-	lives:        int,
-	ball:         Ball,
-	paddle:       Paddle,
-	bricks:       [MAX_BRICKS]Brick,
-	bricks_count: int,
+	score:         int,
+	lives:         int,
+	ball:          Ball,
+	paddle:        Paddle,
+	bricks:        [MAX_BRICKS]Brick,
+	bricks_count:  int,
+	bg_texture:    ^rl.Texture2D,
+	brick_texture: ^rl.Texture2D,
 }
 
+Scene :: struct {
+	using rect: rl.Rectangle,
+	texture:    ^rl.Texture2D,
+}
 
 init_bricks :: proc(
 	data: ^GameData,
@@ -73,7 +80,7 @@ init_bricks :: proc(
 				y      = f32(y + (f32(row) * height) + gap * f32(row)),
 				width  = width,
 				height = height,
-				lives  = 1,
+				lives  = int(rand.int32_range(1, 6)),
 			}
 		}
 	}
@@ -81,33 +88,28 @@ init_bricks :: proc(
 	data.bricks_count = rows * cols
 }
 
-reset_game_data :: proc(data: ^GameData, scene: rl.Rectangle) {
+reset_game_data :: proc(data: ^GameData, scene: Scene) {
 	data.lives = 3
 	data.score = 0
-    reset_ball_and_paddle(&data.ball, &data.paddle, scene)
+	reset_ball_and_paddle(&data.ball, &data.paddle, scene)
 }
 
-reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: rl.Rectangle) {
-	paddle^ = {
-		rec = {
-			x = (scene.x + (scene.width / 2)) - (PADDLE_WIDTH / 2),
-			y = scene.height - 40,
-			width = PADDLE_WIDTH,
-			height = PADDLE_HEIGHT,
-		},
-		speed = PADDLE_SPEED,
+reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: Scene) {
+	paddle.rec = {
+		x      = (scene.x + (scene.width / 2)) - (PADDLE_WIDTH / 2),
+		y      = scene.height - 10,
+		width  = PADDLE_WIDTH,
+		height = PADDLE_HEIGHT,
 	}
-	ball^ = {
-		speed       = BALL_SPEED,
-		radius      = BALL_RADIUS,
-		vel         = {BALL_SPEED, -BALL_SPEED},
-		pos         = {f32(scene.x + (scene.width / 2)), f32(scene.height - 41 - BALL_RADIUS)},
-		initial_vel = {BALL_SPEED, -BALL_SPEED},
-		initial_pos = {f32(scene.x + (scene.width / 2)), f32(scene.height - 41 - BALL_RADIUS)},
-	}
+	paddle.speed = PADDLE_SPEED
+
+	ball.speed = BALL_SPEED
+	ball.radius = BALL_RADIUS
+	ball.vel = {BALL_SPEED, -BALL_SPEED}
+	ball.pos = {f32(scene.x + (scene.width / 2)), f32(scene.height - 11 - BALL_RADIUS)}
 }
 
-process_input :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle, dt: f32) {
+process_input :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f32) {
 	if state == .Playing {
 		if rl.IsKeyDown(.D) {
 			data.paddle.x += (data.paddle.speed * dt)
@@ -125,7 +127,7 @@ process_input :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle, dt
 	}
 }
 
-update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle, dt: f32) {
+update_simulation :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f32) {
 	if state == .Playing {
 		// move ball
 		data.ball.pos += data.ball.vel * dt
@@ -193,6 +195,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 				}
 
 				brick.lives -= 1
+				data.score += 10
 			}
 		}
 
@@ -209,7 +212,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 	}
 }
 
-compute_next_state :: proc(state: GameState, data: ^GameData, scene: rl.Rectangle) -> GameState {
+compute_next_state :: proc(state: GameState, data: ^GameData, scene: Scene) -> GameState {
 	// CHANGE GAME STATE =======
 	ball_fell := data.ball.pos.y >= scene.y + scene.height
 
@@ -232,29 +235,66 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: rl.Rectangl
 		init_bricks(data, scene.x + 90, scene.y + 100, 40, 20, 4, 10, 2)
 		return .StartScreen
 	} else if state == .Serving && rl.IsKeyPressed(.SPACE) {
-        reset_ball_and_paddle(&data.ball, &data.paddle, scene)
+		reset_ball_and_paddle(&data.ball, &data.paddle, scene)
 		return .Playing
 	}
 
 	return state
 }
 
-draw_frame :: proc(data: GameData, state: GameState, scene: rl.Rectangle) {
+draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 	// DRAW ====================
-	rl.ClearBackground({30, 30, 30, 255})
+	rl.SetTextureWrap(data.bg_texture^, .REPEAT)
+	rl.DrawTexturePro(
+		data.bg_texture^,
+		{x = 0, y = 0, width = SCREEN_WIDTH * 32 / 64, height = SCREEN_HEIGHT * 32 / 64},
+		{x = 0, y = 0, width = SCREEN_WIDTH, height = SCREEN_HEIGHT},
+		{0, 0},
+		0,
+		rl.WHITE,
+	)
 
-	lives_text := fmt.ctprintf("Lives %d", data.lives)
-	rl.DrawText(lives_text, i32(scene.x), 50, 20, rl.WHITE)
+	hud_font_size: i32 = 30
+
+	lives_text := fmt.ctprintf("Lives %d  Score %d", data.lives, data.score)
+	rl.DrawText(lives_text, i32(scene.x), i32(scene.y / 2), hud_font_size, rl.WHITE)
 
 	bricks_text := fmt.ctprintf("Bricks left %d", data.bricks_count)
-	text_width := rl.MeasureText(bricks_text, 20)
-	rl.DrawText(bricks_text, i32(scene.x + scene.width) - text_width, 50, 20, rl.WHITE)
+	text_width := rl.MeasureText(bricks_text, hud_font_size)
+	rl.DrawText(
+		bricks_text,
+		i32(scene.x + scene.width) - text_width,
+		i32(scene.y / 2),
+		hud_font_size,
+		rl.WHITE,
+	)
 
 	// Draw playable scene
-	rl.DrawRectangleRec(scene, rl.BLACK)
+	rl.SetTextureWrap(scene.texture^, .REPEAT)
+	rl.DrawTexturePro(
+		scene.texture^,
+		{x = 0, y = 0, width = scene.width * 32 / 64, height = scene.height * 32 / 64},
+		scene,
+		{0, 0},
+		0,
+		rl.WHITE,
+	)
 
-	rl.DrawRectangleRec(data.paddle, rl.WHITE)
-	rl.DrawCircleV(data.ball.pos, data.ball.radius, rl.WHITE)
+	rl.DrawTexturePro(data.paddle.texture^, {0, 0, 32, 16}, data.paddle, {0, 0}, 0, rl.WHITE)
+
+	rl.DrawTexturePro(
+		data.ball.texture^,
+		{0, 0, 32, 32},
+		{
+			data.ball.pos.x - data.ball.radius,
+			data.ball.pos.y - data.ball.radius,
+			data.ball.radius * 2,
+			data.ball.radius * 2,
+		},
+		{0, 0},
+		0,
+		rl.WHITE,
+	)
 
 	switch state {
 	case .Serving, .StartScreen:
@@ -301,7 +341,34 @@ draw_frame :: proc(data: GameData, state: GameState, scene: rl.Rectangle) {
 	}
 
 	for i in 0 ..< data.bricks_count {
-		rl.DrawRectangleRec(data.bricks[i], rl.WHITE)
+        brick := data.bricks[i]
+		rl.DrawTexturePro(
+			data.brick_texture^,
+			{0, 0, 32, 32},
+			brick,
+			{0, 0},
+			0,
+			brick_color(brick.lives),
+		)
+	}
+}
+
+brick_color :: proc(lives: int) -> rl.Color {
+	switch lives {
+	case 1:
+		return {136, 192, 112, 255}
+	case 2:
+		return {220, 214, 70, 255}
+	case 3:
+		return {238, 152, 73, 255}
+	case 4:
+		return {230, 95, 60, 255}
+	case 5:
+		return {200, 50, 50, 255}
+	case 6:
+		return {160, 50, 120, 255}
+	case:
+		return {160, 50, 120, 255}
 	}
 }
 
@@ -310,20 +377,36 @@ main :: proc() {
 	rl.SetTargetFPS(60)
 	defer rl.CloseWindow()
 
-	scene_width: f32 = 600.0
-	scene_height: f32 = 700.0
-	scene := rl.Rectangle {
-		x      = (SCREEN_WIDTH / 2) - (scene_width / 2),
-		y      = SCREEN_HEIGHT - scene_height,
-		width  = scene_width,
-		height = scene_height,
+	bg_texture := rl.LoadTexture("./assets/background.png")
+	defer rl.UnloadTexture(bg_texture)
+	scene_texture := rl.LoadTexture("./assets/scene_background.png")
+	defer rl.UnloadTexture(scene_texture)
+	ball_texture := rl.LoadTexture("./assets/ball.png")
+	defer rl.UnloadTexture(ball_texture)
+	paddle_texture := rl.LoadTexture("./assets/paddle.png")
+	defer rl.UnloadTexture(paddle_texture)
+	brick_texture := rl.LoadTexture("./assets/brick.png")
+	defer rl.UnloadTexture(brick_texture)
+
+	scene_width: f32 = 640.0
+	scene_height: f32 = 480 * 1.8
+	scene: Scene = {
+		x       = (SCREEN_WIDTH / 2) - (scene_width / 2),
+		y       = SCREEN_HEIGHT - scene_height,
+		width   = scene_width,
+		height  = scene_height,
+		texture = &scene_texture,
 	}
 
 	game_state := GameState.StartScreen
 	game_data: GameData
+	game_data.ball.texture = &ball_texture
+	game_data.paddle.texture = &paddle_texture
+	game_data.brick_texture = &brick_texture
+	game_data.bg_texture = &bg_texture
 	reset_game_data(&game_data, scene)
 
-	init_bricks(&game_data, scene.x + 90, scene.y + 100, 40, 20, 4, 10, 2)
+	init_bricks(&game_data, scene.x + 64, scene.y + 100, 64, 30, 4, 8, 2)
 
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
