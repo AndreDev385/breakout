@@ -16,8 +16,11 @@ PADDLE_WIDTH :: 100
 PADDLE_HEIGHT :: 20
 PADDLE_SPEED :: 450
 
-BALL_SPEED :: 400
+BALL_SPEED :: 500
 BALL_RADIUS :: 12.0
+
+POWER_UP_SIZE :: 25
+POWER_UP_SPEED :: 300
 
 Brick :: struct {
 	using rec: rl.Rectangle,
@@ -47,15 +50,36 @@ Ball :: struct {
 	texture: ^rl.Texture2D,
 }
 
+PowerUpKind :: enum {
+	WidePaddle,
+	ExtraLife,
+	SlowBall,
+}
+
+PowerUp :: struct {
+	kind:      PowerUpKind,
+	duration:  f32,
+	timer:     f32,
+	is_active: bool,
+}
+
+PowerSquare :: struct {
+	using rec: rl.Rectangle,
+	kind:      PowerUpKind,
+}
+
 GameData :: struct {
-	score:         int,
-	lives:         int,
-	ball:          Ball,
-	paddle:        Paddle,
-	bricks:        [MAX_BRICKS]Brick,
-	bricks_count:  int,
-	bg_texture:    ^rl.Texture2D,
-	brick_texture: ^rl.Texture2D,
+	score:           int,
+	lives:           int,
+	ball:            Ball,
+	paddle:          Paddle,
+	bricks:          [MAX_BRICKS]Brick,
+	bricks_count:    int,
+	bg_texture:      ^rl.Texture2D,
+	brick_texture:   ^rl.Texture2D,
+	power_ups:       [len(PowerUpKind)]PowerUp,
+	power_squares:   [dynamic]PowerSquare,
+	power_up_chance: f32, // % of chances of get a power up e very time a brick is hit
 }
 
 Scene :: struct {
@@ -91,6 +115,13 @@ init_bricks :: proc(
 reset_game_data :: proc(data: ^GameData, scene: Scene) {
 	data.lives = 3
 	data.score = 0
+	data.power_up_chance = 70
+	data.power_ups = {
+		{timer = 0, duration = 5, is_active = false, kind = .WidePaddle},
+		{timer = 0, duration = 0, is_active = false, kind = .ExtraLife},
+		{timer = 0, duration = 5, is_active = false, kind = .SlowBall},
+	}
+	clear(&data.power_squares)
 	reset_ball_and_paddle(&data.ball, &data.paddle, scene)
 }
 
@@ -105,7 +136,7 @@ reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: Scene) {
 
 	ball.speed = BALL_SPEED
 	ball.radius = BALL_RADIUS
-	ball.vel = {BALL_SPEED, -BALL_SPEED}
+	ball.vel = {BALL_SPEED / 2, -BALL_SPEED / 2}
 	ball.pos = {f32(scene.x + (scene.width / 2)), f32(scene.height - 11 - BALL_RADIUS)}
 }
 
@@ -124,6 +155,43 @@ process_input :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f32) 
 				data.paddle.x = scene.x
 			}
 		}
+	}
+}
+
+apply_power_up :: proc(data: ^GameData, scene: Scene, kind: PowerUpKind) {
+	switch kind {
+	case .WidePaddle:
+		data.paddle.x -= PADDLE_WIDTH / 2
+        data.paddle.width = PADDLE_WIDTH * 2
+		if data.paddle.x + data.paddle.width > scene.x + scene.width {
+			data.paddle.x = scene.x + scene.width - data.paddle.width
+		}
+	case .ExtraLife:
+		data.lives += 1
+	case .SlowBall:
+		data.ball.speed = BALL_SPEED / 2
+
+		velx := data.ball.vel.x / 2
+		vely := data.ball.vel.y / 2
+		data.ball.vel.x = math.clamp(velx, -BALL_SPEED, BALL_SPEED)
+		data.ball.vel.y = math.clamp(vely, -BALL_SPEED, BALL_SPEED)
+	}
+}
+
+revert_power_up :: proc(data: ^GameData, kind: PowerUpKind) {
+	switch kind {
+	case .WidePaddle:
+		data.paddle.width = PADDLE_WIDTH
+        data.paddle.x += PADDLE_WIDTH / 2
+	case .ExtraLife:
+		return
+	case .SlowBall:
+		data.ball.speed = BALL_SPEED
+
+		velx := data.ball.vel.x * 2
+		vely := data.ball.vel.y * 2
+		data.ball.vel.x = math.clamp(velx, -BALL_SPEED, BALL_SPEED)
+		data.ball.vel.y = math.clamp(vely, -BALL_SPEED, BALL_SPEED)
 	}
 }
 
@@ -196,10 +264,24 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f
 
 				brick.lives -= 1
 				data.score += 10
+
+				// create power up
+				random := rand.float32_range(0, 100)
+				if random <= data.power_up_chance {
+					kind := PowerUpKind(rand.int31_max(len(PowerUpKind)))
+					sq := PowerSquare {
+						x      = brick.x + brick.width / 2 - POWER_UP_SIZE / 2,
+						y      = brick.y + brick.height / 2 - POWER_UP_SIZE / 2,
+						width  = POWER_UP_SIZE,
+						height = POWER_UP_SIZE,
+						kind   = kind,
+					}
+					append(&data.power_squares, sq)
+				}
 			}
 		}
 
-		// Move dead breaks to the end
+		// Move dead bricks to the end
 		j := 0
 		for i in 0 ..< data.bricks_count {
 			if data.bricks[i].lives > 0 {
@@ -209,6 +291,39 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f
 		}
 		data.bricks_count = j
 
+		// move power squares down & check collision
+		for &sq, i in data.power_squares {
+			sq.y += POWER_UP_SPEED * dt
+
+			if rl.CheckCollisionRecs(sq, data.paddle) {
+				pu := &data.power_ups[int(sq.kind)]
+				if !pu.is_active do apply_power_up(data, scene, pu.kind)
+				pu.is_active = true
+				if pu.duration > 0 do pu.timer = pu.duration
+				unordered_remove(&data.power_squares, i)
+            }
+
+			if sq.y >= scene.y + scene.height {
+				unordered_remove(&data.power_squares, i)
+			}
+		}
+
+		for &pu in data.power_ups {
+			if pu.is_active {
+				if pu.duration > 0 {
+					pu.timer -= dt
+
+					if pu.timer <= 0 {
+						pu.timer = 0
+						pu.is_active = false
+						revert_power_up(data, pu.kind)
+					}
+				} else {
+					pu.is_active = false
+					revert_power_up(data, pu.kind)
+				}
+			}
+		}
 	}
 }
 
@@ -280,6 +395,22 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		rl.WHITE,
 	)
 
+	for sq in data.power_squares {
+		rl.DrawRectangleRec(sq, rl.WHITE)
+	}
+
+	for i in 0 ..< data.bricks_count {
+		brick := data.bricks[i]
+		rl.DrawTexturePro(
+			data.brick_texture^,
+			{0, 0, 32, 32},
+			brick,
+			{0, 0},
+			0,
+			brick_color(brick.lives),
+		)
+	}
+
 	rl.DrawTexturePro(data.paddle.texture^, {0, 0, 32, 16}, data.paddle, {0, 0}, 0, rl.WHITE)
 
 	rl.DrawTexturePro(
@@ -339,18 +470,6 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		)
 	case .Playing:
 	}
-
-	for i in 0 ..< data.bricks_count {
-        brick := data.bricks[i]
-		rl.DrawTexturePro(
-			data.brick_texture^,
-			{0, 0, 32, 32},
-			brick,
-			{0, 0},
-			0,
-			brick_color(brick.lives),
-		)
-	}
 }
 
 brick_color :: proc(lives: int) -> rl.Color {
@@ -404,6 +523,8 @@ main :: proc() {
 	game_data.paddle.texture = &paddle_texture
 	game_data.brick_texture = &brick_texture
 	game_data.bg_texture = &bg_texture
+	game_data.power_squares = make([dynamic]PowerSquare, 0)
+	defer free(&game_data.power_squares)
 	reset_game_data(&game_data, scene)
 
 	init_bricks(&game_data, scene.x + 64, scene.y + 100, 64, 30, 4, 8, 2)
