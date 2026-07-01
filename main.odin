@@ -1,8 +1,10 @@
 package main
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:math/rand"
+import "core:os"
 import rl "vendor:raylib"
 
 SCREEN_WIDTH :: 640 * 2
@@ -21,6 +23,45 @@ BALL_RADIUS :: 12.0
 
 POWER_UP_SIZE :: 25
 POWER_UP_SPEED :: 300
+
+LEVELS := []string{"./assets/level_01.json"}
+
+TILESET_COLUMNS :: 3
+TILESET_TILE_SIZE :: 32
+
+Tiled_Property :: struct {
+	name:  string     `json:"name"`,
+	type:  string     `json:"type"`,
+	value: json.Value `json:"value"`,
+}
+
+Tiled_Object :: struct {
+	x:          f64              `json:"x"`,
+	y:          f64              `json:"y"`,
+	width:      f64              `json:"width"`,
+	height:     f64              `json:"height"`,
+	gid:        i32              `json:"gid"`,
+	name:       string           `json:"name"`,
+	properties: []Tiled_Property `json:"properties"`,
+}
+
+Tiled_Layer :: struct {
+	name:       string           `json:"name"`,
+	type:       string           `json:"type"`,
+	width:      i32              `json:"width"`,
+	height:     i32              `json:"height"`,
+	data:       []i32            `json:"data"`,
+	objects:    []Tiled_Object   `json:"objects"`,
+	properties: []Tiled_Property `json:"properties"`,
+}
+
+Tiled_Map :: struct {
+	width:      i32           `json:"width"`,
+	height:     i32           `json:"height"`,
+	tilewidth:  i32           `json:"tilewidth"`,
+	tileheight: i32           `json:"tileheight"`,
+	layers:     []Tiled_Layer `json:"layers"`,
+}
 
 Brick :: struct {
 	using rec: rl.Rectangle,
@@ -75,44 +116,134 @@ GameData :: struct {
 	paddle:          Paddle,
 	bricks:          [MAX_BRICKS]Brick,
 	bricks_count:    int,
-	bg_texture:      ^rl.Texture2D,
 	brick_texture:   ^rl.Texture2D,
+	tileset_texture: ^rl.Texture2D,
 	power_ups:       [len(PowerUpKind)]PowerUp,
 	power_squares:   [dynamic]PowerSquare,
 	power_up_chance: f32, // % of chances of get a power up e very time a brick is hit
+	level:           Tiled_Map,
+	current_level:   int,
 }
 
-Scene :: struct {
-	using rect: rl.Rectangle,
-	texture:    ^rl.Texture2D,
+load_level :: proc(path: string) -> (map_data: Tiled_Map, ok: bool) {
+	data, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil do return
+	defer delete(data)
+
+	unmarshal_err := json.unmarshal(data, &map_data)
+	if unmarshal_err != nil do return
+
+	return map_data, true
 }
 
-init_bricks :: proc(
-	data: ^GameData,
-	x: f32,
-	y: f32,
-	width: f32,
-	height: f32,
-	rows: int,
-	cols: int,
-	gap: f32,
-) {
-	for row in 0 ..< rows {
-		for col in 0 ..< cols {
-			data.bricks[row * cols + col] = {
-				x      = f32(x + (f32(col) * width) + gap * f32(col)),
-				y      = f32(y + (f32(row) * height) + gap * f32(row)),
-				width  = width,
-				height = height,
-				lives  = int(rand.int32_range(1, 6)),
+get_play_area_from_level :: proc(map_data: ^Tiled_Map) -> rl.Rectangle {
+	for layer in map_data.layers {
+		if layer.name != "scene" do continue
+		for obj in layer.objects {
+			if obj.name == "play_area" {
+				return {
+					x      = f32(obj.x),
+					y      = f32(obj.y),
+					width  = f32(obj.width),
+					height = f32(obj.height),
+				}
 			}
 		}
 	}
-
-	data.bricks_count = rows * cols
+	return {0, 0, 640, 864}
 }
 
-reset_game_data :: proc(data: ^GameData, scene: Scene) {
+load_scene_from_level :: proc(map_data: ^Tiled_Map) -> rl.Rectangle {
+	play_area := get_play_area_from_level(map_data)
+	map_total_height := f32(map_data.height * map_data.tileheight)
+	map_offset_y := SCREEN_HEIGHT - map_total_height
+	return {
+		x      = (SCREEN_WIDTH - play_area.width) / 2,
+		y      = play_area.y + map_offset_y,
+		width  = play_area.width,
+		height = play_area.height,
+	}
+}
+
+load_bricks_from_level :: proc(map_data: ^Tiled_Map, offset: rl.Vector2, bricks: ^[MAX_BRICKS]Brick) -> int {
+	count := 0
+
+	for layer in map_data.layers {
+		if layer.name != "bricks" || layer.type != "objectgroup" do continue
+
+		for obj in layer.objects {
+			lives := 1
+			for prop in obj.properties {
+				if prop.name == "lives" && prop.type == "int" {
+					#partial switch v in prop.value {
+					case f64:
+						lives = int(v)
+					case i64:
+						lives = int(v)
+					}
+				}
+			}
+
+			bricks[count] = {
+				x      = offset.x + f32(obj.x),
+				y      = offset.y + f32(obj.y),
+				width  = f32(obj.width),
+				height = f32(obj.height),
+				lives  = lives,
+			}
+			count += 1
+		}
+	}
+
+	return count
+}
+
+load_current_level :: proc(data: ^GameData, scene: ^rl.Rectangle) -> bool {
+	level_path := LEVELS[data.current_level]
+	level, ok := load_level(level_path)
+	if !ok {
+		fmt.eprintf("Failed to load level: %s\n", level_path)
+		return false
+	}
+
+	data.level = level
+	play_area := get_play_area_from_level(&data.level)
+	scene^ = load_scene_from_level(&data.level)
+	map_offset := rl.Vector2{scene.x - play_area.x, scene.y - play_area.y}
+	data.bricks_count = load_bricks_from_level(&data.level, map_offset, &data.bricks)
+	return true
+}
+
+draw_level_background :: proc(map_data: ^Tiled_Map, texture: ^rl.Texture2D, offset: rl.Vector2) {
+	for layer in map_data.layers {
+		if layer.name != "background" || layer.type != "tilelayer" do continue
+
+		for tile_id, i in layer.data {
+			if tile_id == 0 do continue
+
+			tile_id_0 := tile_id - 1
+			src := rl.Rectangle{
+				x      = f32((tile_id_0 % TILESET_COLUMNS) * TILESET_TILE_SIZE),
+				y      = f32((tile_id_0 / TILESET_COLUMNS) * TILESET_TILE_SIZE),
+				width  = TILESET_TILE_SIZE,
+				height = TILESET_TILE_SIZE,
+			}
+
+			col := i % int(layer.width)
+			row := i / int(layer.width)
+			dst := rl.Rectangle{
+				x      = offset.x + f32(col * TILESET_TILE_SIZE),
+				y      = offset.y + f32(row * TILESET_TILE_SIZE),
+				width  = TILESET_TILE_SIZE,
+				height = TILESET_TILE_SIZE,
+			}
+
+			rl.DrawTexturePro(texture^, src, dst, {0, 0}, 0, rl.WHITE)
+		}
+	}
+}
+
+reset_game_data :: proc(data: ^GameData, scene: rl.Rectangle) {
 	data.lives = 3
 	data.score = 0
 	data.power_up_chance = 70
@@ -125,10 +256,10 @@ reset_game_data :: proc(data: ^GameData, scene: Scene) {
 	reset_ball_and_paddle(&data.ball, &data.paddle, scene)
 }
 
-reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: Scene) {
+reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: rl.Rectangle) {
 	paddle.rec = {
 		x      = (scene.x + (scene.width / 2)) - (PADDLE_WIDTH / 2),
-		y      = scene.height - 10,
+		y      = scene.y + scene.height - PADDLE_HEIGHT - 64,
 		width  = PADDLE_WIDTH,
 		height = PADDLE_HEIGHT,
 	}
@@ -137,10 +268,10 @@ reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: Scene) {
 	ball.speed = BALL_SPEED
 	ball.radius = BALL_RADIUS
 	ball.vel = {BALL_SPEED / 2, -BALL_SPEED / 2}
-	ball.pos = {f32(scene.x + (scene.width / 2)), f32(scene.height - 11 - BALL_RADIUS)}
+	ball.pos = {f32(scene.x + (scene.width / 2)), f32(paddle.y - BALL_RADIUS)}
 }
 
-process_input :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f32) {
+process_input :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle, dt: f32) {
 	if state == .Playing {
 		if rl.IsKeyDown(.D) {
 			data.paddle.x += (data.paddle.speed * dt)
@@ -158,7 +289,7 @@ process_input :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f32) 
 	}
 }
 
-apply_power_up :: proc(data: ^GameData, scene: Scene, kind: PowerUpKind) {
+apply_power_up :: proc(data: ^GameData, scene: rl.Rectangle, kind: PowerUpKind) {
 	switch kind {
 	case .WidePaddle:
 		data.paddle.x -= PADDLE_WIDTH / 2
@@ -195,7 +326,7 @@ revert_power_up :: proc(data: ^GameData, kind: PowerUpKind) {
 	}
 }
 
-update_simulation :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f32) {
+update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle, dt: f32) {
 	if state == .Playing {
 		// move ball
 		data.ball.pos += data.ball.vel * dt
@@ -327,7 +458,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: Scene, dt: f
 	}
 }
 
-compute_next_state :: proc(state: GameState, data: ^GameData, scene: Scene) -> GameState {
+compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectangle) -> GameState {
 	// CHANGE GAME STATE =======
 	ball_fell := data.ball.pos.y >= scene.y + scene.height
 
@@ -340,34 +471,35 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: Scene) -> G
 	} else if state == .Paused && rl.IsKeyPressed(.P) {
 		return .Playing
 	} else if state == .Playing && data.bricks_count == 0 {
-		return .GameWon
+		data.current_level += 1
+		if data.current_level < len(LEVELS) {
+			load_current_level(data, scene)
+			reset_game_data(data, scene^)
+			return .Serving
+		} else {
+			return .GameWon
+		}
 	} else if state == .GameOver && rl.IsKeyPressed(.SPACE) {
-		reset_game_data(data, scene)
-		init_bricks(data, scene.x + 90, scene.y + 100, 40, 20, 4, 10, 2)
+		data.current_level = 0
+		load_current_level(data, scene)
+		reset_game_data(data, scene^)
 		return .StartScreen
 	} else if state == .GameWon && rl.IsKeyPressed(.SPACE) {
-		reset_game_data(data, scene)
-		init_bricks(data, scene.x + 90, scene.y + 100, 40, 20, 4, 10, 2)
+		data.current_level = 0
+		load_current_level(data, scene)
+		reset_game_data(data, scene^)
 		return .StartScreen
 	} else if state == .Serving && rl.IsKeyPressed(.SPACE) {
-		reset_ball_and_paddle(&data.ball, &data.paddle, scene)
+		reset_ball_and_paddle(&data.ball, &data.paddle, scene^)
 		return .Playing
 	}
 
 	return state
 }
 
-draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
+draw_frame :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle) {
 	// DRAW ====================
-	rl.SetTextureWrap(data.bg_texture^, .REPEAT)
-	rl.DrawTexturePro(
-		data.bg_texture^,
-		{x = 0, y = 0, width = SCREEN_WIDTH * 32 / 64, height = SCREEN_HEIGHT * 32 / 64},
-		{x = 0, y = 0, width = SCREEN_WIDTH, height = SCREEN_HEIGHT},
-		{0, 0},
-		0,
-		rl.WHITE,
-	)
+	rl.ClearBackground(rl.BLACK)
 
 	hud_font_size: i32 = 30
 
@@ -385,15 +517,9 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 	)
 
 	// Draw playable scene
-	rl.SetTextureWrap(scene.texture^, .REPEAT)
-	rl.DrawTexturePro(
-		scene.texture^,
-		{x = 0, y = 0, width = scene.width * 32 / 64, height = scene.height * 32 / 64},
-		scene,
-		{0, 0},
-		0,
-		rl.WHITE,
-	)
+	play_area := get_play_area_from_level(&data.level)
+	map_offset := rl.Vector2{scene.x - play_area.x, scene.y - play_area.y}
+	draw_level_background(&data.level, data.tileset_texture, map_offset)
 
 	for sq in data.power_squares {
 		rl.DrawRectangleRec(sq, rl.WHITE)
@@ -403,7 +529,7 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		brick := data.bricks[i]
 		rl.DrawTexturePro(
 			data.brick_texture^,
-			{0, 0, 32, 32},
+			{0, 0, 64, 32},
 			brick,
 			{0, 0},
 			0,
@@ -434,7 +560,7 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		rl.DrawText(
 			text,
 			i32(scene.x) + i32(scene.width / 2) - (text_width / 2),
-			i32(scene.height / 2),
+			i32(scene.y + scene.height / 2),
 			32,
 			rl.WHITE,
 		)
@@ -444,7 +570,7 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		rl.DrawText(
 			text,
 			i32(scene.x) + i32(scene.width / 2) - (text_width / 2),
-			i32(scene.height / 2),
+			i32(scene.y + scene.height / 2),
 			32,
 			rl.WHITE,
 		)
@@ -454,7 +580,7 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		rl.DrawText(
 			text,
 			i32(scene.x) + i32(scene.width / 2) - (text_width / 2),
-			i32(scene.height / 2),
+			i32(scene.y + scene.height / 2),
 			32,
 			rl.WHITE,
 		)
@@ -464,7 +590,7 @@ draw_frame :: proc(data: GameData, state: GameState, scene: Scene) {
 		rl.DrawText(
 			text,
 			i32(scene.x) + i32(scene.width / 2) - (text_width / 2),
-			i32(scene.height / 2),
+			i32(scene.y + scene.height / 2),
 			32,
 			rl.WHITE,
 		)
@@ -496,48 +622,39 @@ main :: proc() {
 	rl.SetTargetFPS(60)
 	defer rl.CloseWindow()
 
-	bg_texture := rl.LoadTexture("./assets/background.png")
-	defer rl.UnloadTexture(bg_texture)
-	scene_texture := rl.LoadTexture("./assets/scene_background.png")
-	defer rl.UnloadTexture(scene_texture)
 	ball_texture := rl.LoadTexture("./assets/ball.png")
 	defer rl.UnloadTexture(ball_texture)
 	paddle_texture := rl.LoadTexture("./assets/paddle.png")
 	defer rl.UnloadTexture(paddle_texture)
 	brick_texture := rl.LoadTexture("./assets/brick.png")
 	defer rl.UnloadTexture(brick_texture)
-
-	scene_width: f32 = 640.0
-	scene_height: f32 = 480 * 1.8
-	scene: Scene = {
-		x       = (SCREEN_WIDTH / 2) - (scene_width / 2),
-		y       = SCREEN_HEIGHT - scene_height,
-		width   = scene_width,
-		height  = scene_height,
-		texture = &scene_texture,
-	}
+	tileset_texture := rl.LoadTexture("./assets/tileset.png")
+	defer rl.UnloadTexture(tileset_texture)
 
 	game_state := GameState.StartScreen
 	game_data: GameData
 	game_data.ball.texture = &ball_texture
 	game_data.paddle.texture = &paddle_texture
 	game_data.brick_texture = &brick_texture
-	game_data.bg_texture = &bg_texture
+	game_data.tileset_texture = &tileset_texture
 	game_data.power_squares = make([dynamic]PowerSquare, 0)
 	defer free(&game_data.power_squares)
-	reset_game_data(&game_data, scene)
 
-	init_bricks(&game_data, scene.x + 64, scene.y + 100, 64, 30, 4, 8, 2)
+	scene: rl.Rectangle
+	if !load_current_level(&game_data, &scene) {
+		return
+	}
+	reset_game_data(&game_data, scene)
 
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
 
 		process_input(&game_data, game_state, scene, dt)
 		update_simulation(&game_data, game_state, scene, dt)
-		game_state = compute_next_state(game_state, &game_data, scene)
+		game_state = compute_next_state(game_state, &game_data, &scene)
 
 		rl.BeginDrawing()
-		draw_frame(game_data, game_state, scene)
+		draw_frame(&game_data, game_state, scene)
 		rl.EndDrawing()
 	}
 }
