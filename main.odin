@@ -24,42 +24,42 @@ BALL_RADIUS :: 12.0
 POWER_UP_SIZE :: 25
 POWER_UP_SPEED :: 300
 
-LEVELS := []string{"./assets/level_01.json"}
+LEVELS := []string{"./assets/level_01.json", "./assets/level_02.json"}
 
 TILESET_COLUMNS :: 3
 TILESET_TILE_SIZE :: 32
 
 Tiled_Property :: struct {
-	name:  string     `json:"name"`,
-	type:  string     `json:"type"`,
+	name:  string `json:"name"`,
+	type:  string `json:"type"`,
 	value: json.Value `json:"value"`,
 }
 
 Tiled_Object :: struct {
-	x:          f64              `json:"x"`,
-	y:          f64              `json:"y"`,
-	width:      f64              `json:"width"`,
-	height:     f64              `json:"height"`,
-	gid:        i32              `json:"gid"`,
-	name:       string           `json:"name"`,
+	x:          f64 `json:"x"`,
+	y:          f64 `json:"y"`,
+	width:      f64 `json:"width"`,
+	height:     f64 `json:"height"`,
+	gid:        i32 `json:"gid"`,
+	name:       string `json:"name"`,
 	properties: []Tiled_Property `json:"properties"`,
 }
 
 Tiled_Layer :: struct {
-	name:       string           `json:"name"`,
-	type:       string           `json:"type"`,
-	width:      i32              `json:"width"`,
-	height:     i32              `json:"height"`,
-	data:       []i32            `json:"data"`,
-	objects:    []Tiled_Object   `json:"objects"`,
+	name:       string `json:"name"`,
+	type:       string `json:"type"`,
+	width:      i32 `json:"width"`,
+	height:     i32 `json:"height"`,
+	data:       []i32 `json:"data"`,
+	objects:    []Tiled_Object `json:"objects"`,
 	properties: []Tiled_Property `json:"properties"`,
 }
 
 Tiled_Map :: struct {
-	width:      i32           `json:"width"`,
-	height:     i32           `json:"height"`,
-	tilewidth:  i32           `json:"tilewidth"`,
-	tileheight: i32           `json:"tileheight"`,
+	width:      i32 `json:"width"`,
+	height:     i32 `json:"height"`,
+	tilewidth:  i32 `json:"tilewidth"`,
+	tileheight: i32 `json:"tileheight"`,
 	layers:     []Tiled_Layer `json:"layers"`,
 }
 
@@ -102,6 +102,7 @@ PowerUp :: struct {
 	duration:  f32,
 	timer:     f32,
 	is_active: bool,
+	chance:    f32,
 }
 
 PowerSquare :: struct {
@@ -120,7 +121,6 @@ GameData :: struct {
 	tileset_texture: ^rl.Texture2D,
 	power_ups:       [len(PowerUpKind)]PowerUp,
 	power_squares:   [dynamic]PowerSquare,
-	power_up_chance: f32, // % of chances of get a power up e very time a brick is hit
 	level:           Tiled_Map,
 	current_level:   int,
 }
@@ -142,9 +142,9 @@ get_play_area_from_level :: proc(map_data: ^Tiled_Map) -> rl.Rectangle {
 		for obj in layer.objects {
 			if obj.name == "play_area" {
 				return {
-					x      = f32(obj.x),
-					y      = f32(obj.y),
-					width  = f32(obj.width),
+					x = f32(obj.x),
+					y = f32(obj.y),
+					width = f32(obj.width),
 					height = f32(obj.height),
 				}
 			}
@@ -158,14 +158,18 @@ load_scene_from_level :: proc(map_data: ^Tiled_Map) -> rl.Rectangle {
 	map_total_height := f32(map_data.height * map_data.tileheight)
 	map_offset_y := SCREEN_HEIGHT - map_total_height
 	return {
-		x      = (SCREEN_WIDTH - play_area.width) / 2,
-		y      = play_area.y + map_offset_y,
-		width  = play_area.width,
+		x = (SCREEN_WIDTH - play_area.width) / 2,
+		y = play_area.y + map_offset_y,
+		width = play_area.width,
 		height = play_area.height,
 	}
 }
 
-load_bricks_from_level :: proc(map_data: ^Tiled_Map, offset: rl.Vector2, bricks: ^[MAX_BRICKS]Brick) -> int {
+load_bricks_from_level :: proc(
+	map_data: ^Tiled_Map,
+	offset: rl.Vector2,
+	bricks: ^[MAX_BRICKS]Brick,
+) -> int {
 	count := 0
 
 	for layer in map_data.layers {
@@ -222,7 +226,7 @@ draw_level_background :: proc(map_data: ^Tiled_Map, texture: ^rl.Texture2D, offs
 			if tile_id == 0 do continue
 
 			tile_id_0 := tile_id - 1
-			src := rl.Rectangle{
+			src := rl.Rectangle {
 				x      = f32((tile_id_0 % TILESET_COLUMNS) * TILESET_TILE_SIZE),
 				y      = f32((tile_id_0 / TILESET_COLUMNS) * TILESET_TILE_SIZE),
 				width  = TILESET_TILE_SIZE,
@@ -231,7 +235,7 @@ draw_level_background :: proc(map_data: ^Tiled_Map, texture: ^rl.Texture2D, offs
 
 			col := i % int(layer.width)
 			row := i / int(layer.width)
-			dst := rl.Rectangle{
+			dst := rl.Rectangle {
 				x      = offset.x + f32(col * TILESET_TILE_SIZE),
 				y      = offset.y + f32(row * TILESET_TILE_SIZE),
 				width  = TILESET_TILE_SIZE,
@@ -244,13 +248,12 @@ draw_level_background :: proc(map_data: ^Tiled_Map, texture: ^rl.Texture2D, offs
 }
 
 reset_game_data :: proc(data: ^GameData, scene: rl.Rectangle) {
-	data.lives = 3
+	data.lives = 5
 	data.score = 0
-	data.power_up_chance = 70
 	data.power_ups = {
-		{timer = 0, duration = 5, is_active = false, kind = .WidePaddle},
-		{timer = 0, duration = 0, is_active = false, kind = .ExtraLife},
-		{timer = 0, duration = 5, is_active = false, kind = .SlowBall},
+		{timer = 0, duration = 5, is_active = false, kind = .WidePaddle, chance = 20},
+		{timer = 0, duration = 0, is_active = false, kind = .ExtraLife, chance = 1},
+		{timer = 0, duration = 5, is_active = false, kind = .SlowBall, chance = 10},
 	}
 	clear(&data.power_squares)
 	reset_ball_and_paddle(&data.ball, &data.paddle, scene)
@@ -267,7 +270,7 @@ reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: rl.Rectangle)
 
 	ball.speed = BALL_SPEED
 	ball.radius = BALL_RADIUS
-	ball.vel = {BALL_SPEED / 2, -BALL_SPEED / 2}
+	ball.vel = {0, -BALL_SPEED}
 	ball.pos = {f32(scene.x + (scene.width / 2)), f32(paddle.y - BALL_RADIUS)}
 }
 
@@ -293,10 +296,14 @@ apply_power_up :: proc(data: ^GameData, scene: rl.Rectangle, kind: PowerUpKind) 
 	switch kind {
 	case .WidePaddle:
 		data.paddle.x -= PADDLE_WIDTH / 2
-        data.paddle.width = PADDLE_WIDTH * 2
+		data.paddle.width = PADDLE_WIDTH * 2
 		if data.paddle.x + data.paddle.width > scene.x + scene.width {
 			data.paddle.x = scene.x + scene.width - data.paddle.width
 		}
+
+        if data.paddle.x < 0 {
+            data.paddle.x = 0
+        }
 	case .ExtraLife:
 		data.lives += 1
 	case .SlowBall:
@@ -313,7 +320,7 @@ revert_power_up :: proc(data: ^GameData, kind: PowerUpKind) {
 	switch kind {
 	case .WidePaddle:
 		data.paddle.width = PADDLE_WIDTH
-        data.paddle.x += PADDLE_WIDTH / 2
+		data.paddle.x += PADDLE_WIDTH / 2
 	case .ExtraLife:
 		return
 	case .SlowBall:
@@ -397,17 +404,19 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 				data.score += 10
 
 				// create power up
-				random := rand.float32_range(0, 100)
-				if random <= data.power_up_chance {
-					kind := PowerUpKind(rand.int31_max(len(PowerUpKind)))
-					sq := PowerSquare {
-						x      = brick.x + brick.width / 2 - POWER_UP_SIZE / 2,
-						y      = brick.y + brick.height / 2 - POWER_UP_SIZE / 2,
-						width  = POWER_UP_SIZE,
-						height = POWER_UP_SIZE,
-						kind   = kind,
+				for power_up in data.power_ups {
+					random := rand.float32_range(0, 101)
+					if random <= power_up.chance {
+						kind := PowerUpKind(rand.int31_max(len(PowerUpKind)))
+						sq := PowerSquare {
+							x      = brick.x + brick.width / 2 - POWER_UP_SIZE / 2,
+							y      = brick.y + brick.height / 2 - POWER_UP_SIZE / 2,
+							width  = POWER_UP_SIZE,
+							height = POWER_UP_SIZE,
+							kind   = kind,
+						}
+						append(&data.power_squares, sq)
 					}
-					append(&data.power_squares, sq)
 				}
 			}
 		}
@@ -431,8 +440,9 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 				if !pu.is_active do apply_power_up(data, scene, pu.kind)
 				pu.is_active = true
 				if pu.duration > 0 do pu.timer = pu.duration
+                data.score += 30
 				unordered_remove(&data.power_squares, i)
-            }
+			}
 
 			if sq.y >= scene.y + scene.height {
 				unordered_remove(&data.power_squares, i)
@@ -465,6 +475,7 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 	if state == .StartScreen && rl.IsKeyPressed(.SPACE) {
 		return .Playing
 	} else if state == .Playing && ball_fell {
+        clear(&data.power_squares)
 		return .GameOver if data.lives == 0 else .Serving
 	} else if state == .Playing && rl.IsKeyPressed(.P) {
 		return .Paused
@@ -474,7 +485,8 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 		data.current_level += 1
 		if data.current_level < len(LEVELS) {
 			load_current_level(data, scene)
-			reset_game_data(data, scene^)
+			reset_ball_and_paddle(&data.ball, &data.paddle, scene^)
+	        clear(&data.power_squares)
 			return .Serving
 		} else {
 			return .GameWon
@@ -601,17 +613,17 @@ draw_frame :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle) {
 brick_color :: proc(lives: int) -> rl.Color {
 	switch lives {
 	case 1:
-		return {136, 192, 112, 255}
+        return rl.WHITE
 	case 2:
-		return {220, 214, 70, 255}
+		return {136, 192, 112, 255}
 	case 3:
-		return {238, 152, 73, 255}
+		return {220, 214, 70, 255}
 	case 4:
-		return {230, 95, 60, 255}
+		return {238, 152, 73, 255}
 	case 5:
-		return {200, 50, 50, 255}
+		return {230, 95, 60, 255}
 	case 6:
-		return {160, 50, 120, 255}
+		return {200, 50, 50, 255}
 	case:
 		return {160, 50, 120, 255}
 	}
