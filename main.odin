@@ -24,7 +24,7 @@ BALL_RADIUS :: 12.0
 POWER_UP_SIZE :: 25
 POWER_UP_SPEED :: 300
 
-LEVELS := []string{"./assets/level_01.json", "./assets/level_02.json"}
+LEVELS := []string{"./assets/level_01.json", "./assets/level_02.json", "./assets/level_03.json"}
 
 TILESET_COLUMNS :: 3
 TILESET_TILE_SIZE :: 32
