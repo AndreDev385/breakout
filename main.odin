@@ -111,18 +111,22 @@ PowerSquare :: struct {
 }
 
 GameData :: struct {
-	score:           int,
-	lives:           int,
-	ball:            Ball,
-	paddle:          Paddle,
-	bricks:          [MAX_BRICKS]Brick,
-	bricks_count:    int,
-	brick_texture:   ^rl.Texture2D,
-	tileset_texture: ^rl.Texture2D,
-	power_ups:       [len(PowerUpKind)]PowerUp,
-	power_squares:   [dynamic]PowerSquare,
-	level:           Tiled_Map,
-	current_level:   int,
+	score:               int,
+	lives:               int,
+	ball:                Ball,
+	paddle:              Paddle,
+	bricks:              [MAX_BRICKS]Brick,
+	bricks_count:        int,
+	brick_texture:       ^rl.Texture2D,
+	tileset_texture:     ^rl.Texture2D,
+	power_ups:           [len(PowerUpKind)]PowerUp,
+	power_squares:       [dynamic]PowerSquare,
+	// power ups textures
+	slow_ball_texture:   ^rl.Texture2D,
+	life_texture:        ^rl.Texture2D,
+	wide_paddle_texture: ^rl.Texture2D,
+	level:               Tiled_Map,
+	current_level:       int,
 }
 
 load_level :: proc(path: string) -> (map_data: Tiled_Map, ok: bool) {
@@ -301,9 +305,9 @@ apply_power_up :: proc(data: ^GameData, scene: rl.Rectangle, kind: PowerUpKind) 
 			data.paddle.x = scene.x + scene.width - data.paddle.width
 		}
 
-        if data.paddle.x < 0 {
-            data.paddle.x = 0
-        }
+		if data.paddle.x < 0 {
+			data.paddle.x = 0
+		}
 	case .ExtraLife:
 		data.lives += 1
 	case .SlowBall:
@@ -440,7 +444,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 				if !pu.is_active do apply_power_up(data, scene, pu.kind)
 				pu.is_active = true
 				if pu.duration > 0 do pu.timer = pu.duration
-                data.score += 30
+				data.score += 30
 				unordered_remove(&data.power_squares, i)
 			}
 
@@ -475,7 +479,7 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 	if state == .StartScreen && rl.IsKeyPressed(.SPACE) {
 		return .Playing
 	} else if state == .Playing && ball_fell {
-        clear(&data.power_squares)
+		clear(&data.power_squares)
 		return .GameOver if data.lives == 0 else .Serving
 	} else if state == .Playing && rl.IsKeyPressed(.P) {
 		return .Paused
@@ -486,7 +490,7 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 		if data.current_level < len(LEVELS) {
 			load_current_level(data, scene)
 			reset_ball_and_paddle(&data.ball, &data.paddle, scene^)
-	        clear(&data.power_squares)
+			clear(&data.power_squares)
 			return .Serving
 		} else {
 			return .GameWon
@@ -534,7 +538,17 @@ draw_frame :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle) {
 	draw_level_background(&data.level, data.tileset_texture, map_offset)
 
 	for sq in data.power_squares {
-		rl.DrawRectangleRec(sq, rl.WHITE)
+		texture: rl.Texture2D
+		switch sq.kind {
+		case .WidePaddle:
+			texture = data.wide_paddle_texture^
+		case .ExtraLife:
+			texture = data.life_texture^
+		case .SlowBall:
+			texture = data.slow_ball_texture^
+		}
+
+		rl.DrawTexturePro(texture, {0, 0, 32, 32}, sq, {0, 0}, 0, rl.WHITE)
 	}
 
 	for i in 0 ..< data.bricks_count {
@@ -613,7 +627,7 @@ draw_frame :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle) {
 brick_color :: proc(lives: int) -> rl.Color {
 	switch lives {
 	case 1:
-        return rl.WHITE
+		return rl.WHITE
 	case 2:
 		return {136, 192, 112, 255}
 	case 3:
@@ -643,6 +657,14 @@ main :: proc() {
 	tileset_texture := rl.LoadTexture("./assets/tileset.png")
 	defer rl.UnloadTexture(tileset_texture)
 
+	// power ups textures
+	slow_ball_texture := rl.LoadTexture("./assets/slow_ball.png")
+	defer rl.UnloadTexture(slow_ball_texture)
+	life_texture := rl.LoadTexture("./assets/life.png")
+	defer rl.UnloadTexture(life_texture)
+	wide_paddle_texture := rl.LoadTexture("./assets/wide_paddle.png")
+	defer rl.UnloadTexture(wide_paddle_texture)
+
 	game_state := GameState.StartScreen
 	game_data: GameData
 	game_data.ball.texture = &ball_texture
@@ -650,6 +672,9 @@ main :: proc() {
 	game_data.brick_texture = &brick_texture
 	game_data.tileset_texture = &tileset_texture
 	game_data.power_squares = make([dynamic]PowerSquare, 0)
+	game_data.wide_paddle_texture = &wide_paddle_texture
+	game_data.life_texture = &life_texture
+	game_data.slow_ball_texture = &slow_ball_texture
 	defer free(&game_data.power_squares)
 
 	scene: rl.Rectangle
