@@ -346,6 +346,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 
 		// ball collisions
 		if data.ball.pos.x - data.ball.radius <= scene.x {
+            data.ball.pos.x = scene.x + data.ball.radius
 			data.ball.vel.x = -data.ball.vel.x
 		}
 
@@ -354,6 +355,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 		}
 
 		if data.ball.pos.x + data.ball.radius >= scene.x + scene.width {
+            data.ball.pos.x = scene.x + scene.width - data.ball.radius
 			data.ball.vel.x = -data.ball.vel.x
 		}
 
