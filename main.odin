@@ -19,7 +19,7 @@ PADDLE_WIDTH :: 100
 PADDLE_HEIGHT :: 20
 PADDLE_SPEED :: 450
 
-BALL_SPEED :: 500
+BALL_SPEED :: 800
 BALL_RADIUS :: 12.0
 
 POWER_UP_SIZE :: 25
@@ -28,6 +28,7 @@ POWER_UP_SPEED :: 300
 LEVELS := []string{"./assets/level_01.json", "./assets/level_02.json", "./assets/level_03.json"}
 
 HIGH_SCORE_COUNT :: 5
+LIVE_SCORE :: 50
 
 TILESET_COLUMNS :: 3
 TILESET_TILE_SIZE :: 32
@@ -80,6 +81,12 @@ GameState :: enum {
 	GameWon,
 }
 
+GameEvent :: enum {
+	BrickHit,
+	LifeLost,
+	PowerUp,
+}
+
 Paddle :: struct {
 	using rec: rl.Rectangle,
 	speed:     f32,
@@ -116,6 +123,7 @@ PowerSquare :: struct {
 GameData :: struct {
 	score:               int,
 	high_scores:         [HIGH_SCORE_COUNT]int,
+	events:              bit_set[GameEvent],
 	lives:               int,
 	ball:                Ball,
 	paddle:              Paddle,
@@ -259,9 +267,9 @@ reset_game_data :: proc(data: ^GameData, scene: rl.Rectangle) {
 	data.lives = 5
 	data.score = 0
 	data.power_ups = {
-		{timer = 0, duration = 5, is_active = false, kind = .WidePaddle, chance = 20},
-		{timer = 0, duration = 0, is_active = false, kind = .ExtraLife, chance = 1},
-		{timer = 0, duration = 5, is_active = false, kind = .SlowBall, chance = 10},
+		{timer = 0, duration = 5, is_active = false, kind = .WidePaddle, chance = 10.0},
+		{timer = 0, duration = 0, is_active = false, kind = .ExtraLife, chance = 0.2},
+		{timer = 0, duration = 5, is_active = false, kind = .SlowBall, chance = 5.0},
 	}
 	clear(&data.power_squares)
 	reset_ball_and_paddle(&data.ball, &data.paddle, scene)
@@ -278,7 +286,7 @@ reset_ball_and_paddle :: proc(ball: ^Ball, paddle: ^Paddle, scene: rl.Rectangle)
 
 	ball.speed = BALL_SPEED
 	ball.radius = BALL_RADIUS
-	ball.vel = {0, -BALL_SPEED}
+	ball.vel = {1, -BALL_SPEED}
 	ball.pos = {f32(scene.x + (scene.width / 2)), f32(paddle.y - BALL_RADIUS)}
 }
 
@@ -365,6 +373,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 
 		if ball_fell {
 			data.lives -= 1
+			data.events += {.LifeLost}
 		}
 
 		// ball + paddle collision
@@ -412,6 +421,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 
 				brick.lives -= 1
 				data.score += 10
+				data.events += {.BrickHit}
 
 				// create power up
 				for power_up in data.power_ups {
@@ -451,6 +461,7 @@ update_simulation :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle
 				pu.is_active = true
 				if pu.duration > 0 do pu.timer = pu.duration
 				data.score += 30
+				data.events += {.PowerUp}
 				unordered_remove(&data.power_squares, i)
 			}
 
@@ -505,7 +516,7 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 			clear(&data.power_squares)
 			return .Serving
 		} else {
-			insert_score(&data.high_scores, data.score)
+			insert_score(&data.high_scores, data.score + (data.lives * LIVE_SCORE))
 			save_high_scores(&data.high_scores)
 			return .GameWon
 		}
@@ -669,26 +680,37 @@ brick_color :: proc(lives: int) -> rl.Color {
 	}
 }
 
-get_hs_save_dir :: proc() -> string {
-	xdg := os.get_env_alloc("XDG_DATA_HOME", context.allocator)
-	if xdg != "" {
-		defer delete(xdg)
-		return fmt.tprintf("%s/breakout", xdg)
+hs_pathbuf_reserve :: #force_inline proc(buf: ^[1024]u8, parts: ..string) -> string {
+	off := 0
+	for part in parts {
+		for i in 0 ..< len(part) {
+			buf[off] = part[i]
+			off += 1
+		}
 	}
-	home := os.get_env_alloc("HOME", context.allocator)
-	defer delete(home)
-	return fmt.tprintf("%s/.local/share/breakout", home)
-}
-
-get_hs_save_path :: proc() -> string {
-	dir := get_hs_save_dir()
-	defer delete(dir)
-	return fmt.tprintf("%s/highscores.txt", dir)
+	buf[off] = 0
+	return string(buf[:off])
 }
 
 load_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
-	path := get_hs_save_path()
-	defer delete(path)
+	xdg_buf: [256]u8
+	home_buf: [256]u8
+	xdg := os.get_env_buf(xdg_buf[:], "XDG_DATA_HOME")
+	home := os.get_env_buf(home_buf[:], "HOME")
+
+	buf: [1024]u8
+	dir: string
+	if xdg != "" {
+		dir = hs_pathbuf_reserve(&buf, xdg, "/breakout")
+	} else if home != "" {
+		dir = hs_pathbuf_reserve(&buf, home, "/.local/share/breakout")
+	} else {
+		for i in 0 ..< HIGH_SCORE_COUNT { scores[i] = 0 }
+		return
+	}
+	os.make_directory(dir, os.Permissions_All)
+
+	path := hs_pathbuf_reserve(&buf, dir, "/highscores.txt")
 
 	data, err := os.read_entire_file_from_path(path, context.allocator)
 	if err != nil {
@@ -714,12 +736,21 @@ load_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
 }
 
 save_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
-	dir := get_hs_save_dir()
-	defer delete(dir)
+	xdg_buf: [256]u8
+	home_buf: [256]u8
+	xdg := os.get_env_buf(xdg_buf[:], "XDG_DATA_HOME")
+	home := os.get_env_buf(home_buf[:], "HOME")
+
+	buf: [1024]u8
+	dir: string
+	if xdg != "" {
+		dir = hs_pathbuf_reserve(&buf, xdg, "/breakout")
+	} else if home != "" {
+		dir = hs_pathbuf_reserve(&buf, home, "/.local/share/breakout")
+	} else { return }
 	os.make_directory(dir, os.Permissions_All)
 
-	path := get_hs_save_path()
-	defer delete(path)
+	path := hs_pathbuf_reserve(&buf, dir, "/highscores.txt")
 
 	data := fmt.tprintf("%d\n%d\n%d\n%d\n%d\n", scores[0], scores[1], scores[2], scores[3], scores[4])
 	defer delete(data)
@@ -740,8 +771,10 @@ insert_score :: proc(scores: ^[HIGH_SCORE_COUNT]int, new_score: int) {
 
 main :: proc() {
 	rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Breakout")
-	rl.SetTargetFPS(60)
 	defer rl.CloseWindow()
+	rl.InitAudioDevice()
+	defer rl.CloseAudioDevice()
+	rl.SetTargetFPS(60)
 
 	ball_texture := rl.LoadTexture("./assets/ball.png")
 	defer rl.UnloadTexture(ball_texture)
@@ -778,12 +811,15 @@ main :: proc() {
 	}
 	reset_game_data(&game_data, scene)
 	load_high_scores(&game_data.high_scores)
+	init_sounds()
+	defer deinit_sounds()
 
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
 
 		process_input(&game_data, game_state, scene, dt)
 		update_simulation(&game_data, game_state, scene, dt)
+		process_sound_events(&game_data.events)
 		game_state = compute_next_state(game_state, &game_data, &scene)
 
 		rl.BeginDrawing()
