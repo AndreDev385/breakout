@@ -309,8 +309,8 @@ apply_power_up :: proc(data: ^GameData, scene: rl.Rectangle, kind: PowerUpKind) 
 			data.paddle.x = scene.x + scene.width - data.paddle.width
 		}
 
-		if data.paddle.x < 0 {
-			data.paddle.x = 0
+		if data.paddle.x < scene.x {
+			data.paddle.x = scene.x
 		}
 	case .ExtraLife:
 		data.lives += 1
