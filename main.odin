@@ -1,19 +1,14 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:math/rand"
-import "core:os"
-import "core:strings"
 import rl "vendor:raylib"
 
 SCREEN_WIDTH :: 640 * 2
 SCREEN_HEIGHT :: 480 * 2
 
 MAX_ANGLE :: math.PI / 3
-
-MAX_BRICKS :: 1000
 
 PADDLE_WIDTH :: 100
 PADDLE_HEIGHT :: 20
@@ -25,47 +20,7 @@ BALL_RADIUS :: 12.0
 POWER_UP_SIZE :: 25
 POWER_UP_SPEED :: 300
 
-LEVELS := []string{"./assets/level_01.json", "./assets/level_02.json", "./assets/level_03.json"}
-
-HIGH_SCORE_COUNT :: 5
 LIVE_SCORE :: 50
-
-TILESET_COLUMNS :: 3
-TILESET_TILE_SIZE :: 32
-
-Tiled_Property :: struct {
-	name:  string `json:"name"`,
-	type:  string `json:"type"`,
-	value: json.Value `json:"value"`,
-}
-
-Tiled_Object :: struct {
-	x:          f64 `json:"x"`,
-	y:          f64 `json:"y"`,
-	width:      f64 `json:"width"`,
-	height:     f64 `json:"height"`,
-	gid:        i32 `json:"gid"`,
-	name:       string `json:"name"`,
-	properties: []Tiled_Property `json:"properties"`,
-}
-
-Tiled_Layer :: struct {
-	name:       string `json:"name"`,
-	type:       string `json:"type"`,
-	width:      i32 `json:"width"`,
-	height:     i32 `json:"height"`,
-	data:       []i32 `json:"data"`,
-	objects:    []Tiled_Object `json:"objects"`,
-	properties: []Tiled_Property `json:"properties"`,
-}
-
-Tiled_Map :: struct {
-	width:      i32 `json:"width"`,
-	height:     i32 `json:"height"`,
-	tilewidth:  i32 `json:"tilewidth"`,
-	tileheight: i32 `json:"tileheight"`,
-	layers:     []Tiled_Layer `json:"layers"`,
-}
 
 Brick :: struct {
 	using rec: rl.Rectangle,
@@ -139,128 +94,6 @@ GameData :: struct {
 	wide_paddle_texture: ^rl.Texture2D,
 	level:               Tiled_Map,
 	current_level:       int,
-}
-
-load_level :: proc(path: string) -> (map_data: Tiled_Map, ok: bool) {
-	data, err := os.read_entire_file_from_path(path, context.allocator)
-	if err != nil do return
-	defer delete(data)
-
-	unmarshal_err := json.unmarshal(data, &map_data)
-	if unmarshal_err != nil do return
-
-	return map_data, true
-}
-
-get_play_area_from_level :: proc(map_data: ^Tiled_Map) -> rl.Rectangle {
-	for layer in map_data.layers {
-		if layer.name != "scene" do continue
-		for obj in layer.objects {
-			if obj.name == "play_area" {
-				return {
-					x = f32(obj.x),
-					y = f32(obj.y),
-					width = f32(obj.width),
-					height = f32(obj.height),
-				}
-			}
-		}
-	}
-	return {0, 0, 640, 864}
-}
-
-load_scene_from_level :: proc(map_data: ^Tiled_Map) -> rl.Rectangle {
-	play_area := get_play_area_from_level(map_data)
-	map_total_height := f32(map_data.height * map_data.tileheight)
-	map_offset_y := SCREEN_HEIGHT - map_total_height
-	return {
-		x = (SCREEN_WIDTH - play_area.width) / 2,
-		y = play_area.y + map_offset_y,
-		width = play_area.width,
-		height = play_area.height,
-	}
-}
-
-load_bricks_from_level :: proc(
-	map_data: ^Tiled_Map,
-	offset: rl.Vector2,
-	bricks: ^[MAX_BRICKS]Brick,
-) -> int {
-	count := 0
-
-	for layer in map_data.layers {
-		if layer.name != "bricks" || layer.type != "objectgroup" do continue
-
-		for obj in layer.objects {
-			lives := 1
-			for prop in obj.properties {
-				if prop.name == "lives" && prop.type == "int" {
-					#partial switch v in prop.value {
-					case f64:
-						lives = int(v)
-					case i64:
-						lives = int(v)
-					}
-				}
-			}
-
-			bricks[count] = {
-				x      = offset.x + f32(obj.x),
-				y      = offset.y + f32(obj.y),
-				width  = f32(obj.width),
-				height = f32(obj.height),
-				lives  = lives,
-			}
-			count += 1
-		}
-	}
-
-	return count
-}
-
-load_current_level :: proc(data: ^GameData, scene: ^rl.Rectangle) -> bool {
-	level_path := LEVELS[data.current_level]
-	level, ok := load_level(level_path)
-	if !ok {
-		fmt.eprintf("Failed to load level: %s\n", level_path)
-		return false
-	}
-
-	data.level = level
-	play_area := get_play_area_from_level(&data.level)
-	scene^ = load_scene_from_level(&data.level)
-	map_offset := rl.Vector2{scene.x - play_area.x, scene.y - play_area.y}
-	data.bricks_count = load_bricks_from_level(&data.level, map_offset, &data.bricks)
-	return true
-}
-
-draw_level_background :: proc(map_data: ^Tiled_Map, texture: ^rl.Texture2D, offset: rl.Vector2) {
-	for layer in map_data.layers {
-		if layer.name != "background" || layer.type != "tilelayer" do continue
-
-		for tile_id, i in layer.data {
-			if tile_id == 0 do continue
-
-			tile_id_0 := tile_id - 1
-			src := rl.Rectangle {
-				x      = f32((tile_id_0 % TILESET_COLUMNS) * TILESET_TILE_SIZE),
-				y      = f32((tile_id_0 / TILESET_COLUMNS) * TILESET_TILE_SIZE),
-				width  = TILESET_TILE_SIZE,
-				height = TILESET_TILE_SIZE,
-			}
-
-			col := i % int(layer.width)
-			row := i / int(layer.width)
-			dst := rl.Rectangle {
-				x      = offset.x + f32(col * TILESET_TILE_SIZE),
-				y      = offset.y + f32(row * TILESET_TILE_SIZE),
-				width  = TILESET_TILE_SIZE,
-				height = TILESET_TILE_SIZE,
-			}
-
-			rl.DrawTexturePro(texture^, src, dst, {0, 0}, 0, rl.WHITE)
-		}
-	}
 }
 
 reset_game_data :: proc(data: ^GameData, scene: rl.Rectangle) {
@@ -677,95 +510,6 @@ brick_color :: proc(lives: int) -> rl.Color {
 		return {200, 50, 50, 255}
 	case:
 		return {160, 50, 120, 255}
-	}
-}
-
-hs_pathbuf_reserve :: #force_inline proc(buf: ^[1024]u8, parts: ..string) -> string {
-	off := 0
-	for part in parts {
-		for i in 0 ..< len(part) {
-			buf[off] = part[i]
-			off += 1
-		}
-	}
-	buf[off] = 0
-	return string(buf[:off])
-}
-
-load_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
-	xdg_buf: [256]u8
-	home_buf: [256]u8
-	xdg := os.get_env_buf(xdg_buf[:], "XDG_DATA_HOME")
-	home := os.get_env_buf(home_buf[:], "HOME")
-
-	buf: [1024]u8
-	dir: string
-	if xdg != "" {
-		dir = hs_pathbuf_reserve(&buf, xdg, "/breakout")
-	} else if home != "" {
-		dir = hs_pathbuf_reserve(&buf, home, "/.local/share/breakout")
-	} else {
-		for i in 0 ..< HIGH_SCORE_COUNT { scores[i] = 0 }
-		return
-	}
-	os.make_directory(dir, os.Permissions_All)
-
-	path := hs_pathbuf_reserve(&buf, dir, "/highscores.txt")
-
-	data, err := os.read_entire_file_from_path(path, context.allocator)
-	if err != nil {
-		for i in 0 ..< HIGH_SCORE_COUNT { scores[i] = 0 }
-		return
-	}
-	defer delete(data)
-
-	count := 0
-	it := string(data)
-	for line in strings.split_lines_iterator(&it) {
-		if count >= HIGH_SCORE_COUNT { break }
-		val := 0
-		for ch in line {
-			if ch >= '0' && ch <= '9' {
-				val = val * 10 + int(ch - '0')
-			}
-		}
-		scores[count] = val
-		count += 1
-	}
-	for i in count ..< HIGH_SCORE_COUNT { scores[i] = 0 }
-}
-
-save_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
-	xdg_buf: [256]u8
-	home_buf: [256]u8
-	xdg := os.get_env_buf(xdg_buf[:], "XDG_DATA_HOME")
-	home := os.get_env_buf(home_buf[:], "HOME")
-
-	buf: [1024]u8
-	dir: string
-	if xdg != "" {
-		dir = hs_pathbuf_reserve(&buf, xdg, "/breakout")
-	} else if home != "" {
-		dir = hs_pathbuf_reserve(&buf, home, "/.local/share/breakout")
-	} else { return }
-	os.make_directory(dir, os.Permissions_All)
-
-	path := hs_pathbuf_reserve(&buf, dir, "/highscores.txt")
-
-	data := fmt.tprintf("%d\n%d\n%d\n%d\n%d\n", scores[0], scores[1], scores[2], scores[3], scores[4])
-	defer delete(data)
-	_ = os.write_entire_file(path, transmute([]byte)(data))
-}
-
-insert_score :: proc(scores: ^[HIGH_SCORE_COUNT]int, new_score: int) {
-	for i in 0 ..< HIGH_SCORE_COUNT {
-		if new_score > scores[i] {
-			for j := HIGH_SCORE_COUNT - 1; j > i; j -= 1 {
-				scores[j] = scores[j - 1]
-			}
-			scores[i] = new_score
-			return
-		}
 	}
 }
 
