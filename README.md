@@ -1,45 +1,51 @@
 # Breakout
 
-Clon del clásico **Breakout** de Atari (1976) escrito en [Odin](https://odin-lang.org/) usando [raylib](https://www.raylib.com/) vía el binding `vendor:raylib`.
+A Breakout clone written in [Odin](https://odin-lang.org/) using [raylib](https://www.raylib.com/) via `vendor:raylib`.
 
-## Estado actual
+Levels are designed with [Tiled](https://www.mapeditor.org/) and loaded from JSON.
 
-- [x] Paleta controlable con teclas `A`/`D`
-- [x] Pelota con rebote en bordes de pantalla
-- [x] Colisión pelota ↔ paleta con ángulo variable según punto de impacto
-- [x] Grid de ladrillos (6 filas × 14 columnas)
-- [x] Colisión pelota ↔ ladrillos con destrucción de ladrillos
-- [x] Sistema de vidas y game over
+## Features
 
-## Requisitos
+- 3 levels with different brick layouts loaded from Tiled JSON files
+- Paddle controlled with `A`/`D` keys
+- Ball physics with variable bounce angle based on paddle hit position
+- Brick collision with multiple hit points (colored by remaining lives)
+- 3 power-ups: Wide Paddle, Extra Life, Slow Ball
+- Sound effects: brick hit, life lost, power-up collected
+- Persistent top-5 high scores saved to `~/.local/share/breakout/highscores.txt`
+- Game states: Start Screen, Serving, Playing, Paused, Game Over, Game Won
+- Pause with `P` key
 
-- [Odin](https://odin-lang.org/docs/install/) (compilador)
-- `vendor:raylib` (incluido con Odin — se bajan los binarios automáticamente al compilar)
+## Requirements
 
-## Compilar y ejecutar
+- [Odin](https://odin-lang.org/docs/install/) (compiler)
+- `vendor:raylib` (included with Odin — binaries downloaded automatically on first build)
+
+## Build & Run
 
 ```bash
 odin run .
 ```
 
-Esto compila y lanza el juego en una ventana de 720×640 a 60 FPS.
+## Controls
 
-## Controles
+| Key                | Action                       |
+|--------------------|------------------------------|
+| `A`                | Move paddle left             |
+| `D`                | Move paddle right            |
+| `Space`            | Serve ball / start game      |
+| `P`                | Pause / resume               |
 
-| Tecla                  | Acción                      |
-|------------------------|-----------------------------|
-| `A` / flecha izquierda | Mover paleta a la izquierda |
-| `D` / flecha derecha   | Mover paleta a la derecha   |
+## Project Structure
 
-## Roadmap
-
-1. **Sistema de vidas y Game Over** — la pelota se reposiciona, se pierde una vida al caer
-2. **Sistema de puntuación y HUD** — puntos por ladrillo destruido, indicadores en pantalla
-3. **Estados del juego** — Start Screen, Playing, Pause, Game Over
-4. **Lanzamiento manual** — Barra espaciadora para soltar la pelota al inicio de cada vida
-5. **Niveles múltiples** — distintas disposiciones de ladrillos, dificultad progresiva
-6. **Controles adicionales** — tecla `P`/`Esc` para pausa
-7. **Audio** — efectos de sonido (rebotes, destrucción, game over)
-8. **Power-ups** — Wide Paddle, Multiball, Slow Ball, Extra Life, Sticky Paddle, Laser
-9. **Efectos visuales** — partículas, colores por fila de ladrillos, screen shake
-10. **High score persistente**
+```
+.
+├── main.odin          # Core game logic, rendering, state machine
+├── sound.odin         # Sound system (decoupled via event flags)
+├── assets/
+│   ├── *.png          # Sprites (ball, paddle, bricks, power-ups, tileset)
+│   ├── *.wav          # Sound effects
+│   ├── level_*.json   # Tiled level data
+│   └── tileset.json   # Tileset definition
+└── README.md
+```
