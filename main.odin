@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/rand"
 import "core:os"
+import "core:strings"
 import rl "vendor:raylib"
 
 SCREEN_WIDTH :: 640 * 2
@@ -25,6 +26,8 @@ POWER_UP_SIZE :: 25
 POWER_UP_SPEED :: 300
 
 LEVELS := []string{"./assets/level_01.json", "./assets/level_02.json", "./assets/level_03.json"}
+
+HIGH_SCORE_COUNT :: 5
 
 TILESET_COLUMNS :: 3
 TILESET_TILE_SIZE :: 32
@@ -112,6 +115,7 @@ PowerSquare :: struct {
 
 GameData :: struct {
 	score:               int,
+	high_scores:         [HIGH_SCORE_COUNT]int,
 	lives:               int,
 	ball:                Ball,
 	paddle:              Paddle,
@@ -482,7 +486,13 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 		return .Playing
 	} else if state == .Playing && ball_fell {
 		clear(&data.power_squares)
-		return .GameOver if data.lives == 0 else .Serving
+		if data.lives == 0 {
+			insert_score(&data.high_scores, data.score)
+			save_high_scores(&data.high_scores)
+			return .GameOver
+		} else {
+			return .Serving
+		}
 	} else if state == .Playing && rl.IsKeyPressed(.P) {
 		return .Paused
 	} else if state == .Paused && rl.IsKeyPressed(.P) {
@@ -495,6 +505,8 @@ compute_next_state :: proc(state: GameState, data: ^GameData, scene: ^rl.Rectang
 			clear(&data.power_squares)
 			return .Serving
 		} else {
+			insert_score(&data.high_scores, data.score)
+			save_high_scores(&data.high_scores)
 			return .GameWon
 		}
 	} else if state == .GameOver && rl.IsKeyPressed(.SPACE) {
@@ -624,6 +636,18 @@ draw_frame :: proc(data: ^GameData, state: GameState, scene: rl.Rectangle) {
 		)
 	case .Playing:
 	}
+
+	if state == .StartScreen || state == .Serving || state == .GameOver || state == .GameWon {
+		y_base := i32(scene.y + scene.height / 2) + 70
+		hs_header: cstring = "HIGH SCORES"
+		header_width := rl.MeasureText(hs_header, 24)
+		rl.DrawText(hs_header, i32(scene.x) + i32(scene.width / 2) - header_width / 2, y_base, 24, rl.YELLOW)
+		for i in 0 ..< HIGH_SCORE_COUNT {
+			entry := fmt.ctprintf("%d. %d", i + 1, data.high_scores[i])
+			entry_width := rl.MeasureText(entry, 22)
+			rl.DrawText(entry, i32(scene.x) + i32(scene.width / 2) - entry_width / 2, y_base + 30 + i32(i * 28), 22, rl.WHITE)
+		}
+	}
 }
 
 brick_color :: proc(lives: int) -> rl.Color {
@@ -642,6 +666,75 @@ brick_color :: proc(lives: int) -> rl.Color {
 		return {200, 50, 50, 255}
 	case:
 		return {160, 50, 120, 255}
+	}
+}
+
+get_hs_save_dir :: proc() -> string {
+	xdg := os.get_env_alloc("XDG_DATA_HOME", context.allocator)
+	if xdg != "" {
+		defer delete(xdg)
+		return fmt.tprintf("%s/breakout", xdg)
+	}
+	home := os.get_env_alloc("HOME", context.allocator)
+	defer delete(home)
+	return fmt.tprintf("%s/.local/share/breakout", home)
+}
+
+get_hs_save_path :: proc() -> string {
+	dir := get_hs_save_dir()
+	defer delete(dir)
+	return fmt.tprintf("%s/highscores.txt", dir)
+}
+
+load_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
+	path := get_hs_save_path()
+	defer delete(path)
+
+	data, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil {
+		for i in 0 ..< HIGH_SCORE_COUNT { scores[i] = 0 }
+		return
+	}
+	defer delete(data)
+
+	count := 0
+	it := string(data)
+	for line in strings.split_lines_iterator(&it) {
+		if count >= HIGH_SCORE_COUNT { break }
+		val := 0
+		for ch in line {
+			if ch >= '0' && ch <= '9' {
+				val = val * 10 + int(ch - '0')
+			}
+		}
+		scores[count] = val
+		count += 1
+	}
+	for i in count ..< HIGH_SCORE_COUNT { scores[i] = 0 }
+}
+
+save_high_scores :: proc(scores: ^[HIGH_SCORE_COUNT]int) {
+	dir := get_hs_save_dir()
+	defer delete(dir)
+	os.make_directory(dir, os.Permissions_All)
+
+	path := get_hs_save_path()
+	defer delete(path)
+
+	data := fmt.tprintf("%d\n%d\n%d\n%d\n%d\n", scores[0], scores[1], scores[2], scores[3], scores[4])
+	defer delete(data)
+	_ = os.write_entire_file(path, transmute([]byte)(data))
+}
+
+insert_score :: proc(scores: ^[HIGH_SCORE_COUNT]int, new_score: int) {
+	for i in 0 ..< HIGH_SCORE_COUNT {
+		if new_score > scores[i] {
+			for j := HIGH_SCORE_COUNT - 1; j > i; j -= 1 {
+				scores[j] = scores[j - 1]
+			}
+			scores[i] = new_score
+			return
+		}
 	}
 }
 
@@ -684,6 +777,7 @@ main :: proc() {
 		return
 	}
 	reset_game_data(&game_data, scene)
+	load_high_scores(&game_data.high_scores)
 
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
